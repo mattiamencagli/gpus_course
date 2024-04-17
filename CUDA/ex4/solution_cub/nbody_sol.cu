@@ -76,9 +76,10 @@ __global__ void bodyForce(Body *p, float dt, int n) {
     typedef cub::BlockReduce<float, j_stride> BlockReduce;
     // Allocate shared memory for block reduction
     __shared__ typename BlockReduce::TempStorage temp_storage;
-int i = blockIdx.x;
+
     // in the case each block has multiple i_stars. So in the case you are using less blocks then bodies.
-    //for (int i = blockIdx.x; i < n; i += gridDim.x) { 
+    const int stride_i = gridDim.x;
+    for (int i = blockIdx.x; i < n; i += stride_i) { 
         float Fx = 0.0f; 
         float Fy = 0.0f; 
         float Fz = 0.0f;
