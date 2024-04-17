@@ -5,7 +5,7 @@ echo "this script must be run using 'source'"
 echo
 
 
-ACCOUNT=tra24
+ACCOUNT=tra24_astrophd
 if [ -n "$1" ]; then
 	ACCOUNT=$1
 fi
