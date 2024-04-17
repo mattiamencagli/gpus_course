@@ -1,3 +1,2 @@
 clean:
-	rm `find -name "*.x"`
-	rm `find -name "*.o"`
+	rm `find -name "*.x" -o -name "*.o"`
