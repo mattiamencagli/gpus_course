@@ -11,6 +11,7 @@
 #include <cuda_runtime.h>
 
 #define SOFTENING 1e-9f
+#define NTHREADS 256
 
 #define CUDA_SAFE_CALL(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
@@ -65,30 +66,62 @@ void check_correctness(const char * file_out, const char * file_sol, size_t size
 
 
 
+__inline__ __device__ float warpReduce (float val){
+    for(int k=16; k>0; k>>=1) // bit-wise version of k/=2
+        val += __shfl_down_sync(0xFFFFFFFF, val, k, 32); 
+    return val;
+}
+
+__device__ float blockReduce(float val){
+    static __shared__ float shared[32]; // Shared mem for 32 partial sums
+    int threads_localwarp_id = threadIdx.x % 32; // Lane
+    int warp_id = threadIdx.x / 32;
+    val = warpReduce(val); // Each warp performs partial reduction
+    if (threads_localwarp_id == 0)
+        shared[warp_id] = val; // Write reduced value to shared memory
+    __syncthreads(); // Wait for all partial reductions
+    //read from shared memory
+    val = (threadIdx.x < blockDim.x / 32) ? shared[threads_localwarp_id] : 0.0;
+    if (warp_id == 0)
+        val = warpReduce(val); //Final reduce within first warp
+    return val;
+}
+
+template<int j_stride>
 __global__ void bodyForce(Body *p, float dt, int n) {
-
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int i = index; i < n; i += stride) {
+    // in the case each block has multiple i_stars. So in the case you are using less blocks then bodies.
+    for (int i = blockIdx.x; i < n; i += gridDim.x) { 
         float Fx = 0.0f; 
         float Fy = 0.0f; 
         float Fz = 0.0f;
-        for (int j = 0; j < n; j++){ 
-            float dx = p[j].x - p[i].x;
-            float dy = p[j].y - p[i].y;
-            float dz = p[j].z - p[i].z;
-            float distSqr = dx*dx + dy*dy + dz*dz + SOFTENING;
-            float invDist = rsqrtf(distSqr);
-            float invDist3 = invDist * invDist * invDist;
+        const float pix = p[i].x;
+        const float piy = p[i].y;
+        const float piz = p[i].z;
 
+        // each i-star will have its own block, each thread will take care of a number of interactions (nbodies/j_stride)
+        for (int j = threadIdx.x; j < n; j += j_stride) {
+            const float dx = p[j].x - pix;
+            const float dy = p[j].y - piy;
+            const float dz = p[j].z - piz;
+            const float distSqr = dx*dx + dy*dy + dz*dz + SOFTENING;
+            const float invDist = rsqrtf(distSqr);
+            const float invDist3 = invDist * invDist * invDist;
             Fx += dx * invDist3; 
             Fy += dy * invDist3; 
             Fz += dz * invDist3;
         }
-        p[i].vx += dt*Fx; 
-        p[i].vy += dt*Fy; 
-        p[i].vz += dt*Fz;
+
+        //then we reduce the forces on the first thread of the block
+        Fx = blockReduce(Fx);
+        Fy = blockReduce(Fy);
+        Fz = blockReduce(Fz);
+        __syncthreads();
+        if(threadIdx.x==0){ //only the first thread of each block has the entire block reduction.
+            p[i].vx += dt*Fx;
+            p[i].vy += dt*Fy;
+            p[i].vz += dt*Fz;
+        }
+
     }
 }
 
@@ -155,8 +188,9 @@ int main(int argc, char** argv) {
 
     CUDA_SAFE_CALL(cudaMemPrefetchAsync(bodies, size, deviceId));
 
-    dim3 threads(128, 1, 1);
-    dim3 blocks(16 * numberOfSMs, 1, 1);
+    dim3 threads(NTHREADS, 1, 1);
+    //dim3 blocks(16 * numberOfSMs, 1, 1);
+    dim3 blocks(nBodies, 1, 1);
 
     const float dt = 0.01f;  // Time step
     const int nIters = 10;  // Simulation iterations
@@ -171,7 +205,7 @@ int main(int argc, char** argv) {
         CUDA_SAFE_CALL(cudaEventRecord(start_i, 0));
         CUDA_SAFE_CALL(cudaEventSynchronize(start_i));
 
-        bodyForce<<<blocks, threads>>>(bodies, dt, nBodies); // compute interbody forces
+        bodyForce<NTHREADS><<<blocks, threads>>>(bodies, dt, nBodies); // compute interbody forces
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 

@@ -65,15 +65,38 @@ void check_correctness(const char * file_out, const char * file_sol, size_t size
 
 
 
+__inline__ __device__ float warpReduce (float val){
+    for(int k=16; k>0; k/=2) // bit-wise version of k/=2
+        val += __shfl_down_sync(0xFFFFFFFF, val, k, 32); 
+    return val;
+}
+
+__device__ float blockReduce(float val){
+    static __shared__ float shared[32]; // Shared mem for 32 partial sums
+    int threads_localwarp_id = threadIdx.x % 32; // Lane
+    int warp_id = threadIdx.x / 32;
+    val = warpReduce(val); // Each warp performs partial reduction
+    if (threads_localwarp_id == 0)
+        shared[warp_id] = val; // Write reduced value to shared memory
+    __syncthreads(); // Wait for all partial reductions
+    //read from shared memory
+    val = (threadIdx.x < blockDim.x / 32) ? shared[threads_localwarp_id] : 0.0;
+    if (warp_id == 0)
+        val = warpReduce(val); //Final reduce within first warp
+    return val;
+}
+
 __global__ void bodyForce(Body *p, float dt, int n) {
 
+    //HINT: the starting index and stride willl be different for "i" in this case
     int index = threadIdx.x + blockIdx.x * blockDim.x;
-    int stride = blockDim.x * gridDim.x;
+    int stride = blockDim.x * gridDim.x; 
 
     for (int i = index; i < n; i += stride) {
         float Fx = 0.0f; 
         float Fy = 0.0f; 
         float Fz = 0.0f;
+        //HINT: you will also need a starting index and a stride for "j"
         for (int j = 0; j < n; j++){ 
             float dx = p[j].x - p[i].x;
             float dy = p[j].y - p[i].y;
@@ -86,6 +109,8 @@ __global__ void bodyForce(Body *p, float dt, int n) {
             Fy += dy * invDist3; 
             Fz += dz * invDist3;
         }
+        //HINT: remeber to reduce on the FIRST thread of each block.
+        //HINT: Therefore, only the FIRST thread of each block will write on p[i].v
         p[i].vx += dt*Fx; 
         p[i].vy += dt*Fy; 
         p[i].vz += dt*Fz;
@@ -155,8 +180,8 @@ int main(int argc, char** argv) {
 
     CUDA_SAFE_CALL(cudaMemPrefetchAsync(bodies, size, deviceId));
 
-    dim3 threads(128, 1, 1);
-    dim3 blocks(16 * numberOfSMs, 1, 1);
+    dim3 threads(128, 1, 1); 
+    dim3 blocks(16 * numberOfSMs, 1, 1);  //HINT: use the number of bodies for the blocks
 
     const float dt = 0.01f;  // Time step
     const int nIters = 10;  // Simulation iterations
@@ -171,10 +196,12 @@ int main(int argc, char** argv) {
         CUDA_SAFE_CALL(cudaEventRecord(start_i, 0));
         CUDA_SAFE_CALL(cudaEventSynchronize(start_i));
 
+        //HINT: this is the heavy kernel, scales with N^2. So I suggest to just optimize this one.
         bodyForce<<<blocks, threads>>>(bodies, dt, nBodies); // compute interbody forces
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
+        //HINT: light kernel, scales with N. No need for hard optimizations.
         integratePosition<<<blocks, threads>>>(bodies, dt, nBodies);
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());

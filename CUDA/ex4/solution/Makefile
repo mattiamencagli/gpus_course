@@ -1,0 +1,5 @@
+nbody_sol.x:
+	nvcc -arch=sm_80 -lineinfo nbody_sol.cu -o $@
+
+clean:
+	rm *.x *.o

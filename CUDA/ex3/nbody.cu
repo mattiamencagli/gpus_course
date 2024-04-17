@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
         output_values = "files/output_65536";
         solution_values = "files/solution_65536";
     } else {
-        printf("ERROR: you must choose a number of body that is 4096 (12) or 65536 (16)!\n");
+        printf("ERROR: you must choose 12 or 16 for 4096 or 65536 bodies respectively!\n");
         exit(1);
     }
 
