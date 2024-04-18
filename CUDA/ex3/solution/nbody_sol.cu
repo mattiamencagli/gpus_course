@@ -211,6 +211,15 @@ int main(int argc, char** argv) {
 
     cudaFree(bodies);
 
+    CUDA_SAFE_CALL(cudaEventDestroy(start));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_i));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_i));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_writing));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_writing));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_reading));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_reading));
+
     check_correctness(output_values, solution_values, size, nBodies);
 
     return 0;

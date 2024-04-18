@@ -245,6 +245,14 @@ int main(int argc, char** argv) {
     printf("%0.3f Billion Interactions / second\n", billionsOfOpsPerSecond);
     printf("TOT time loop : %f ms \n", totalTime_loop_ms);
 
+    CUDA_SAFE_CALL(cudaEventDestroy(start));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_i));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_i));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_writing));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_writing));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_reading));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_reading));
     cudaFree(bodies);
 
     check_correctness(output_values, solution_values, size, nBodies);

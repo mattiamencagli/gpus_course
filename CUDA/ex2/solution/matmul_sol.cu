@@ -111,6 +111,11 @@ int main(int argc, char **argv){
     CUDA_SAFE_CALL(cudaFreeHost(h_b));
     CUDA_SAFE_CALL(cudaFreeHost(h_c));
 
+    CUDA_SAFE_CALL(cudaEventDestroy(start));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_c));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_c));
+
     return 0;
 
 }

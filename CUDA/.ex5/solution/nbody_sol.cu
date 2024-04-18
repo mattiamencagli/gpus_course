@@ -96,7 +96,7 @@ __device__ float blockReduce(float val){
 }
 
 template<int j_stride>
-__global__ void bodyForce(floats3 * pos, floats3 * vel, float dt, int n, int off, int max_j) {
+__global__ void bodyForce(floats3 * pos, floats3 * vel, float dt, int n, int j_off, int j_max) {
 
     // in the case each block has multiple i_stars. So in the case you are using less blocks then bodies.
     const int stride_i = gridDim.x;
@@ -108,8 +108,8 @@ __global__ void bodyForce(floats3 * pos, floats3 * vel, float dt, int n, int off
         const float piy = pos[i].y;
         const float piz = pos[i].z;
 
-        // each i-star will have its own block, each thread will take care of a number of interactions (nbodies/j_stride)
-        for (int j = threadIdx.x + off; j < max_j; j += j_stride) {
+        // each i-star will have its own block, each thread will take care of a number of interactions (j_max-off)/j_stride
+        for (int j = threadIdx.x + j_off; j < j_max; j += j_stride) {
             const float dx = pos[j].x - pix;
             const float dy = pos[j].y - piy;
             const float dz = pos[j].z - piz;
@@ -130,8 +130,6 @@ __global__ void bodyForce(floats3 * pos, floats3 * vel, float dt, int n, int off
             vel[i].x += dt*Fx;
             vel[i].y += dt*Fy;
             vel[i].z += dt*Fz;
-            if(i==0)
-                printf("vel[%d] = %f %f %f\n", i, vel[i].x, vel[i].y, vel[i].z);
         }
 
     }
@@ -146,8 +144,8 @@ __global__ void integratePosition(floats3 * pos, floats3 * vel, float dt, int n)
         pos[i].x += vel[i].x * dt;
         pos[i].y += vel[i].y * dt;
         pos[i].z += vel[i].z * dt;
-        if(i==0)
-            printf("vel[%d] = %f %f %f\n", i, vel[i].x, vel[i].y, vel[i].z);
+        //if(i==0)
+            //printf("vel[%d] = %f %f %f\npos[%d] = %f %f %f\n", i, vel[i].x, vel[i].y, vel[i].z, i, pos[i].x, pos[i].y, pos[i].z);
     }
 }
 
@@ -215,7 +213,7 @@ int main(int argc, char** argv) {
     // Works for this simple example for 2 GPUs. 
     int gpu_offsets = MyRank ? (nBodies/NumberOfProcessors + nBodies*(MyRank-1)) : 0;
     int gpu_j_max = gpu_offsets + nBodies/NumberOfProcessors;
-    printf("rank %d, gpu_offset and j_max : %d %d\n", MyRank, gpu_offsets, gpu_j_max);
+    printf("rank %d. gpu_offset and j_max : %d %d\n", MyRank, gpu_offsets, gpu_j_max);
 
     dim3 threads(NTHREADS, 1, 1);
     dim3 blocks(nBodies, 1, 1);
@@ -272,7 +270,6 @@ int main(int argc, char** argv) {
         CUDA_SAFE_CALL(cudaEventSynchronize(stop_writing)); 
     }  
     
-    MPI_Barrier(MPI_COMM_WORLD);
     float totalTime_loop_ms, time_writing_ms, time_reading_ms;
     CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventElapsedTime(&totalTime_loop_ms, start, stop));
@@ -290,6 +287,16 @@ int main(int argc, char** argv) {
     float billionsOfOpsPerSecond = 1e-9 * nBodies * nBodies / (avgTime_ms * 1e-3 * NumberOfProcessors);
     printf("rank %d.  %0.3f Billion Interactions / second\n", MyRank, billionsOfOpsPerSecond);
     printf("rank %d.  TOT time loop : %f ms \n", MyRank, totalTime_loop_ms);
+
+    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
+    CUDA_SAFE_CALL(cudaEventDestroy(start));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_i));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_i));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_writing));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_writing));
+    CUDA_SAFE_CALL(cudaEventDestroy(start_reading));
+    CUDA_SAFE_CALL(cudaEventDestroy(stop_reading));
 
     cudaFree(p);
     cudaFree(v);
