@@ -137,16 +137,12 @@ int main(int argc, char** argv) {
 
         auto starti = std::chrono::high_resolution_clock::now();
 
-        //TODO Use the CUDA function
         bodyForce(bodies, dt, nBodies);
         
-        //TODO remeber to wait for the GPU to finish before going to the next kernel.
         #pragma acc wait
 
-        //TODO Use the CUDA function
         integratePosition(bodies, dt, nBodies);
 
-        //TODO remeber to wait for the GPU to finish before going to the next kernel.
         #pragma acc wait
 
         auto stopi = std::chrono::high_resolution_clock::now();
@@ -157,7 +153,6 @@ int main(int argc, char** argv) {
     #pragma acc exit data copyout(bodies[:nBodies])
     auto stop = std::chrono::high_resolution_clock::now();
     
-    //TODO If you DO NOT use the managed memory, remeber to transfer the results back on the host
     write_values_to_file(output_values, bodies, size); 
     
     float totalTime_loop_ms = std::chrono::duration_cast<std::chrono::microseconds>(stop-start).count()*1e-3;
@@ -166,7 +161,6 @@ int main(int argc, char** argv) {
     printf("%0.3f Billion Interactions / second\n", billionsOfOpsPerSecond);
     printf("TOT time %d : %f ms\n", totalTime_loop_ms);
     
-    //TODO free memory (both host and device) with the CUDA function
     free(bodies);
 
     check_correctness(output_values, solution_values, size, nBodies);
