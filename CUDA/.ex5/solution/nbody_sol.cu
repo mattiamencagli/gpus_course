@@ -34,7 +34,6 @@ void read_values_from_file(const char * file, floats3 * datap, floats3 * datav, 
     for(size_t i=0; i<nBodies; ++i){
         values.read(reinterpret_cast<char*>(datap+i), size3);
         values.read(reinterpret_cast<char*>(datav+i), size3);
-        //printf("body %d    : %f %f %f %f %f %f\n", i/3, datap[i].x, datap[i].y, datap[i].z, datav[i].x, datav[i].y, datav[i].z);
     }
     values.close();
 }
@@ -144,8 +143,6 @@ __global__ void integratePosition(floats3 * pos, floats3 * vel, float dt, int n)
         pos[i].x += vel[i].x * dt;
         pos[i].y += vel[i].y * dt;
         pos[i].z += vel[i].z * dt;
-        //if(i==0)
-            //printf("vel[%d] = %f %f %f\npos[%d] = %f %f %f\n", i, vel[i].x, vel[i].y, vel[i].z, i, pos[i].x, pos[i].y, pos[i].z);
     }
 }
 

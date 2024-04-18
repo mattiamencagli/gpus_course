@@ -15,6 +15,6 @@ PARTITION=boost_usr_prod
 # ALTRIMENTI G100
 #PARTITION=g100_usr_interactive
 
-SRUN="salloc --account $ACCOUNT --partition $PARTITION --time 08:00:00 --nodes 1 --ntasks-per-node=2 --cpus-per-task=8 --gres=gpu:2 --mem=246000 --job-name=astro-phd"
+SRUN="salloc --account $ACCOUNT --partition $PARTITION  --qos boost_qos_dbg --time 00:30:00 --nodes 1 --ntasks-per-node=2 --cpus-per-task=8 --gres=gpu:2 --mem=246000 --job-name=astro-phd"
 echo $SRUN
 eval $SRUN
