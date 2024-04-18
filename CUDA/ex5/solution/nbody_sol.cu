@@ -95,7 +95,7 @@ __device__ float blockReduce(float val){
 }
 
 template<int j_stride>
-__global__ void bodyForce(floats3 * pos, floats3 * vel, float dt, int n, int j_off, int j_max) {
+__global__ void bodyForce(floats3 * pos, floats3 * vel, floats3 * F, float dt, int n, int j_off, int j_max, int g) {
 
     // in the case each block has multiple i_stars. So in the case you are using less blocks then bodies.
     const int stride_i = gridDim.x;
@@ -125,21 +125,24 @@ __global__ void bodyForce(floats3 * pos, floats3 * vel, float dt, int n, int j_o
         Fy = blockReduce(Fy);
         Fz = blockReduce(Fz);
         __syncthreads();
-        if(threadIdx.x==0){ //only the first thread of each block has the entire block reduction.
-            vel[i].x += dt*Fx;
-            vel[i].y += dt*Fy;
-            vel[i].z += dt*Fz;
+        if(threadIdx.x==0){
+            F[i].x = Fx; 
+            F[i].y = Fy; 
+            F[i].z = Fz;
         }
 
     }
 }
 
-__global__ void integratePosition(floats3 * pos, floats3 * vel, float dt, int n) {
+__global__ void integratePosition(floats3 * pos, floats3 * vel, floats3 * F, float dt, int n) {
 
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
     for (int i = index; i < n; i += stride) {
+        vel[i].x += dt*F[i].x;
+        vel[i].y += dt*F[i].y;
+        vel[i].z += dt*F[i].z;
         pos[i].x += vel[i].x * dt;
         pos[i].y += vel[i].y * dt;
         pos[i].z += vel[i].z * dt;
@@ -192,9 +195,10 @@ int main(int argc, char** argv) {
     CUDA_SAFE_CALL(cudaEventCreate(&start_reading));
     CUDA_SAFE_CALL(cudaEventCreate(&stop_reading));
 
-    floats3 *p, *v;
+    floats3 *p, *v, *F;
     CUDA_SAFE_CALL(cudaMallocManaged(&p, size));
     CUDA_SAFE_CALL(cudaMallocManaged(&v, size));
+    CUDA_SAFE_CALL(cudaMallocManaged(&F, size));
     CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventRecord(start_reading));
     CUDA_SAFE_CALL(cudaEventSynchronize(start_reading));
@@ -206,6 +210,7 @@ int main(int argc, char** argv) {
     CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaMemPrefetchAsync(p, size, MyRank));
     CUDA_SAFE_CALL(cudaMemPrefetchAsync(v, size, MyRank));
+    CUDA_SAFE_CALL(cudaMemPrefetchAsync(F, size, MyRank));
 
     // Works for this simple example for 2 GPUs. 
     int gpu_offsets = MyRank ? (nBodies/NumberOfProcessors + nBodies*(MyRank-1)) : 0;
@@ -231,16 +236,17 @@ int main(int argc, char** argv) {
         CUDA_SAFE_CALL(cudaEventSynchronize(start_i));
 
         CUDA_SAFE_CALL(cudaSetDevice(MyRank));
-        bodyForce<NTHREADS><<<blocks, threads>>>(p, v, dt, nBodies, gpu_offsets, gpu_j_max); // compute interbody forces
+        bodyForce<NTHREADS><<<blocks, threads>>>(p, v, F, dt, nBodies, gpu_offsets, gpu_j_max, MyRank); // compute interbody forces
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
-        //MPI reduction in place on the bodies' velocities (possible because all the bodies have the same dt)
+        
+        //MPI reduction in place on the bodies' Forces
         if(NumberOfProcessors > 1)
-            MPI_Allreduce(MPI_IN_PLACE, v, nBodies*3, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(MPI_IN_PLACE, F, nBodies*3, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
         CUDA_SAFE_CALL(cudaSetDevice(MyRank));
-        integratePosition<<<blocks, threads>>>(p, v, dt, nBodies);
+        integratePosition<<<blocks, threads>>>(p, v, F, dt, nBodies);
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
@@ -297,6 +303,7 @@ int main(int argc, char** argv) {
 
     cudaFree(p);
     cudaFree(v);
+    cudaFree(F);
 
     if(!MyRank){
         check_correctness(output_values, solution_values, size, nBodies);
