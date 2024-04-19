@@ -26,47 +26,44 @@ inline void gpuAssert(cudaError_t code, const char *file, int line) {
 }
 
 // Each body contains x, y, and z coordinate positions, as well as velocities in the x, y, and z directions.
+typedef struct { float x, y, z, vx, vy, vz; } Body;
 typedef struct { float x, y, z; } floats3;
 
-void read_values_from_file(const char * file, floats3 * datap, floats3 * datav, size_t nBodies) {
+void read_values_from_file(const char * file, Body * data, size_t size) {
     std::ifstream values(file, std::ios::binary);
-    size_t size3 = sizeof(floats3);
-    for(size_t i=0; i<nBodies; ++i){
-        values.read(reinterpret_cast<char*>(datap+i), size3);
-        values.read(reinterpret_cast<char*>(datav+i), size3);
-    }
+    values.read(reinterpret_cast<char*>(data), size);
     values.close();
 }
 
-void write_values_to_file(const char * file, floats3 * datap, floats3 * datav, size_t nBodies) {
+void write_values_to_file(const char * file, Body * data, size_t size) {
     std::ofstream values(file, std::ios::binary);
-    size_t size3 = sizeof(floats3);
-    for(size_t i=0; i<nBodies; ++i){
-        values.write(reinterpret_cast<char*>(datap+i), size3);
-        values.write(reinterpret_cast<char*>(datav+i), size3);
-    }
+    values.write(reinterpret_cast<char*>(data), size);
     values.close();
 }
 
 void check_correctness(const char * file_out, const char * file_sol, size_t size, size_t nBodies){
 
-    floats3 *out_p = (floats3 *)malloc(size);
-    floats3 *out_v = (floats3 *)malloc(size);
-    floats3 *sol_p = (floats3 *)malloc(size);
-    floats3 *sol_v = (floats3 *)malloc(size);
-    read_values_from_file(file_out, out_p, out_v, nBodies);
-    read_values_from_file(file_sol, sol_p, sol_v, nBodies);
+    Body *out = (Body *)malloc(size);
+    Body *sol = (Body *)malloc(size);
+    std::ifstream values_output(file_out, std::ios::binary);
+    std::ifstream values_solution(file_sol, std::ios::binary);
+    values_output.read(reinterpret_cast<char*>(out), size);
+    values_solution.read(reinterpret_cast<char*>(sol), size);
 
     for(int i=0; i<nBodies; ++i)
-        if(out_p[i].x != sol_p[i].x ){
+        if(out[i].x != sol[i].x ){
             printf("\n\e[01;31m YOUR OUTPUT IS WRONG!\e[0;37m :(\n\n");
-            printf("output body %d    : %f %f %f %f %f %f\n", i, out_p[i].x, out_p[i].y, out_p[i].z, out_v[i].x, out_v[i].y, out_v[i].z);
-            printf("solution body %d  : %f %f %f %f %f %f\n", i, sol_p[i].x, sol_p[i].y, sol_p[i].z, sol_v[i].x, sol_v[i].y, sol_v[i].z);
+            printf("output body %d    : %f %f %f %f %f %f\n", i, out[i].x, out[i].y, out[i].z, out[i].vx, out[i].vy, out[i].vz);
+            printf("solution body %d  : %f %f %f %f %f %f\n", i, sol[i].x, sol[i].y, sol[i].z, sol[i].vx, sol[i].vy, sol[i].vz);
             exit(1);
         }
 
-    free(out_p);
-    free(sol_p);
+    values_output.close();
+    values_solution.close();
+
+    free(out);
+    free(sol);
+
     printf("\n\e[01;32m YOUR OUTPUT IS CORRECT!\e[0;37m :D\n\n");
 
 }
@@ -95,7 +92,7 @@ __device__ float blockReduce(float val){
 }
 
 template<int j_stride>
-__global__ void bodyForce(floats3 * pos, floats3 * vel, floats3 * F, float dt, int n, int j_off, int j_max, int g) {
+__global__ void bodyForce(Body * p, floats3 * F, float dt, int n, int j_off, int j_max) {
 
     // in the case each block has multiple i_stars. So in the case you are using less blocks then bodies.
     const int stride_i = gridDim.x;
@@ -103,15 +100,15 @@ __global__ void bodyForce(floats3 * pos, floats3 * vel, floats3 * F, float dt, i
         float Fx = 0.0f; 
         float Fy = 0.0f; 
         float Fz = 0.0f;
-        const float pix = pos[i].x;
-        const float piy = pos[i].y;
-        const float piz = pos[i].z;
+        const float pix = p[i].x;
+        const float piy = p[i].y;
+        const float piz = p[i].z;
 
         // each i-star will have its own block, each thread will take care of a number of interactions (j_max-off)/j_stride
         for (int j = threadIdx.x + j_off; j < j_max; j += j_stride) {
-            const float dx = pos[j].x - pix;
-            const float dy = pos[j].y - piy;
-            const float dz = pos[j].z - piz;
+            const float dx = p[j].x - pix;
+            const float dy = p[j].y - piy;
+            const float dz = p[j].z - piz;
             const float distSqr = dx*dx + dy*dy + dz*dz + SOFTENING;
             const float invDist = rsqrtf(distSqr);
             const float invDist3 = invDist * invDist * invDist;
@@ -134,18 +131,18 @@ __global__ void bodyForce(floats3 * pos, floats3 * vel, floats3 * F, float dt, i
     }
 }
 
-__global__ void integratePosition(floats3 * pos, floats3 * vel, floats3 * F, float dt, int n) {
+__global__ void integratePosition(Body * p, floats3 * F, float dt, int n) {
 
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
     for (int i = index; i < n; i += stride) {
-        vel[i].x += dt*F[i].x;
-        vel[i].y += dt*F[i].y;
-        vel[i].z += dt*F[i].z;
-        pos[i].x += vel[i].x * dt;
-        pos[i].y += vel[i].y * dt;
-        pos[i].z += vel[i].z * dt;
+        p[i].vx += F[i].x * dt;
+        p[i].vy += F[i].y * dt;
+        p[i].vz += F[i].z * dt;
+        p[i].x += p[i].vx * dt;
+        p[i].y += p[i].vy * dt;
+        p[i].z += p[i].vz * dt;
     }
 }
 
@@ -158,7 +155,8 @@ int main(int argc, char** argv) {
     int nBodies = 1<<12; //the other choice is 1<<16
     if (argc > 1) 
         nBodies = 1<<atoi(argv[1]);
-    int size = nBodies * sizeof(floats3);
+    int size = nBodies * sizeof(Body);
+    int sizeF = nBodies * sizeof(floats3);
 
 	//MPI Intialization
     int MyRank, NumberOfProcessors;
@@ -195,22 +193,21 @@ int main(int argc, char** argv) {
     CUDA_SAFE_CALL(cudaEventCreate(&start_reading));
     CUDA_SAFE_CALL(cudaEventCreate(&stop_reading));
 
-    floats3 *p, *v, *F;
-    CUDA_SAFE_CALL(cudaMallocManaged(&p, size));
-    CUDA_SAFE_CALL(cudaMallocManaged(&v, size));
-    CUDA_SAFE_CALL(cudaMallocManaged(&F, size));
+    Body *bodies;
+    floats3 *F;
+    CUDA_SAFE_CALL(cudaMallocManaged(&bodies, size));
+    CUDA_SAFE_CALL(cudaMallocManaged(&F, sizeF));
     CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventRecord(start_reading));
     CUDA_SAFE_CALL(cudaEventSynchronize(start_reading));
-    read_values_from_file(initialized_values, p, v, nBodies);
+    read_values_from_file(initialized_values, bodies, size);
     CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventRecord(stop_reading));
     CUDA_SAFE_CALL(cudaEventSynchronize(stop_reading));  
 
     CUDA_SAFE_CALL(cudaSetDevice(MyRank));
-    CUDA_SAFE_CALL(cudaMemPrefetchAsync(p, size, MyRank));
-    CUDA_SAFE_CALL(cudaMemPrefetchAsync(v, size, MyRank));
-    CUDA_SAFE_CALL(cudaMemPrefetchAsync(F, size, MyRank));
+    CUDA_SAFE_CALL(cudaMemPrefetchAsync(bodies, size, MyRank));
+    CUDA_SAFE_CALL(cudaMemPrefetchAsync(F, sizeF, MyRank));
 
     // Works for this simple example for 2 GPUs. 
     int gpu_offsets = MyRank ? (nBodies/NumberOfProcessors + nBodies*(MyRank-1)) : 0;
@@ -236,7 +233,7 @@ int main(int argc, char** argv) {
         CUDA_SAFE_CALL(cudaEventSynchronize(start_i));
 
         CUDA_SAFE_CALL(cudaSetDevice(MyRank));
-        bodyForce<NTHREADS><<<blocks, threads>>>(p, v, F, dt, nBodies, gpu_offsets, gpu_j_max, MyRank); // compute interbody forces
+        bodyForce<NTHREADS><<<blocks, threads>>>(bodies, F, dt, nBodies, gpu_offsets, gpu_j_max); // compute interbody forces
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
@@ -246,7 +243,7 @@ int main(int argc, char** argv) {
             MPI_Allreduce(MPI_IN_PLACE, F, nBodies*3, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
         CUDA_SAFE_CALL(cudaSetDevice(MyRank));
-        integratePosition<<<blocks, threads>>>(p, v, F, dt, nBodies);
+        integratePosition<<<blocks, threads>>>(bodies, F, dt, nBodies);
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
@@ -267,7 +264,7 @@ int main(int argc, char** argv) {
         CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         CUDA_SAFE_CALL(cudaEventRecord(start_writing));
         CUDA_SAFE_CALL(cudaEventSynchronize(start_writing));  
-        write_values_to_file(output_values, p, v, nBodies);
+        write_values_to_file(output_values, bodies, size);
         CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         CUDA_SAFE_CALL(cudaEventRecord(stop_writing));
         CUDA_SAFE_CALL(cudaEventSynchronize(stop_writing)); 
@@ -301,8 +298,7 @@ int main(int argc, char** argv) {
     CUDA_SAFE_CALL(cudaEventDestroy(start_reading));
     CUDA_SAFE_CALL(cudaEventDestroy(stop_reading));
 
-    cudaFree(p);
-    cudaFree(v);
+    cudaFree(bodies);
     cudaFree(F);
 
     if(!MyRank){
