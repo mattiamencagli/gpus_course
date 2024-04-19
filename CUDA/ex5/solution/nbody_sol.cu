@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &MyRank);
 	MPI_Comm_size(MPI_COMM_WORLD, &NumberOfProcessors);
-    //Number of GPUs (I culd also use NumberOfProcessors since I assign 1 GPU to each MPI task).
+    //Number of GPUs (I will use NumberOfProcessors since I assign 1 GPU to each MPI task).
     int Ngpus; 
     CUDA_SAFE_CALL(cudaGetDeviceCount(&Ngpus));
 
@@ -182,8 +182,9 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
-    cudaEvent_t start, stop, start_i, stop_i, start_writing, stop_writing, start_reading, stop_reading;
     CUDA_SAFE_CALL(cudaSetDevice(MyRank));
+
+    cudaEvent_t start, stop, start_i, stop_i, start_writing, stop_writing, start_reading, stop_reading;
     CUDA_SAFE_CALL(cudaEventCreate(&start));
     CUDA_SAFE_CALL(cudaEventCreate(&stop));
     CUDA_SAFE_CALL(cudaEventCreate(&start_i));
@@ -197,15 +198,12 @@ int main(int argc, char** argv) {
     floats3 *F;
     CUDA_SAFE_CALL(cudaMallocManaged(&bodies, size));
     CUDA_SAFE_CALL(cudaMallocManaged(&F, sizeF));
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventRecord(start_reading));
     CUDA_SAFE_CALL(cudaEventSynchronize(start_reading));
     read_values_from_file(initialized_values, bodies, size);
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventRecord(stop_reading));
     CUDA_SAFE_CALL(cudaEventSynchronize(stop_reading));  
 
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaMemPrefetchAsync(bodies, size, MyRank));
     CUDA_SAFE_CALL(cudaMemPrefetchAsync(F, sizeF, MyRank));
 
@@ -223,16 +221,13 @@ int main(int argc, char** argv) {
     * This simulation will run for 10 cycles of time, calculating gravitational
     * interaction amongst bodies, and adjusting their positions according to their new velocities.
     */
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventRecord(start));
     CUDA_SAFE_CALL(cudaEventSynchronize(start));
     for (int iter = 0; iter < nIters; iter++) {
 
-        CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         CUDA_SAFE_CALL(cudaEventRecord(start_i));
         CUDA_SAFE_CALL(cudaEventSynchronize(start_i));
 
-        CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         bodyForce<NTHREADS><<<blocks, threads>>>(bodies, F, dt, nBodies, gpu_offsets, gpu_j_max); // compute interbody forces
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
@@ -242,12 +237,10 @@ int main(int argc, char** argv) {
         if(NumberOfProcessors > 1)
             MPI_Allreduce(MPI_IN_PLACE, F, nBodies*3, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
-        CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         integratePosition<<<blocks, threads>>>(bodies, F, dt, nBodies);
         CUDA_SAFE_CALL(cudaGetLastError());
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
-        CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         CUDA_SAFE_CALL(cudaEventRecord(stop_i));
         CUDA_SAFE_CALL(cudaEventSynchronize(stop_i));
         float time_iter_ms;
@@ -255,29 +248,23 @@ int main(int argc, char** argv) {
         printf("rank %d.  time iter %d : %f ms\n", MyRank, iter, time_iter_ms);
 
     }
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventRecord(stop));
     CUDA_SAFE_CALL(cudaEventSynchronize(stop));
     MPI_Barrier(MPI_COMM_WORLD);
 
     if(!MyRank){
-        CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         CUDA_SAFE_CALL(cudaEventRecord(start_writing));
         CUDA_SAFE_CALL(cudaEventSynchronize(start_writing));  
         write_values_to_file(output_values, bodies, size);
-        CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         CUDA_SAFE_CALL(cudaEventRecord(stop_writing));
         CUDA_SAFE_CALL(cudaEventSynchronize(stop_writing)); 
     }  
     
     float totalTime_loop_ms, time_writing_ms, time_reading_ms;
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventElapsedTime(&totalTime_loop_ms, start, stop));
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventElapsedTime(&time_reading_ms, start_reading, stop_reading));    
     printf("\nrank %d.  time reading : %f ms\n", MyRank, time_reading_ms);
     if(!MyRank){
-        CUDA_SAFE_CALL(cudaSetDevice(MyRank));
         CUDA_SAFE_CALL(cudaEventElapsedTime(&time_writing_ms, start_writing, stop_writing));
         printf("rank %d.  time writing : %f ms\n\n", MyRank, time_writing_ms);
     }
@@ -288,7 +275,6 @@ int main(int argc, char** argv) {
     printf("rank %d.  %0.3f Billion Interactions / second\n", MyRank, billionsOfOpsPerSecond);
     printf("rank %d.  TOT time loop : %f ms \n", MyRank, totalTime_loop_ms);
 
-    CUDA_SAFE_CALL(cudaSetDevice(MyRank));
     CUDA_SAFE_CALL(cudaEventDestroy(start));
     CUDA_SAFE_CALL(cudaEventDestroy(stop));
     CUDA_SAFE_CALL(cudaEventDestroy(start_i));
